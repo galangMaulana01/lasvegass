@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard Member</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@1,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      body { font-family: 'Inter', sans-serif; background: #fff; color: #111; }
+      .serif-italic { font-family: 'EB Garamond', serif; font-style: italic; }
+      .view { display: none; }
+      .view.active { display: block; }
+      .card { background: #fff; border-radius: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06); }
+      .btn-black { background: #0a0a0a; color: #fff; border-radius: .75rem; padding: .75rem 1.25rem; font-weight: 600; }
+      .btn-black:hover { background: #262626; }
+      .btn-black:disabled { opacity: .5; }
+      .f-input { width: 100%; background: #eee; border: none; border-radius: .75rem; padding: .9rem 1rem; font-size: .95rem; }
+      .f-input:focus { outline: 2px solid #0a0a0a; }
+      .game-thumb { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: .75rem .75rem 0 0; background: #eee; }
+      .mono { font-family: 'JetBrains Mono', monospace; }
+    </style>
+  </head>
+  <body class="min-h-screen">
+    <div class="max-w-md mx-auto px-4 py-10">
+
+      <!-- ================= LOGIN ================= -->
+      <section id="viewLogin" class="view active">
+        <h1 class="serif-italic text-3xl text-center mb-6">Please Login</h1>
+        <form id="formLogin" class="card p-6 space-y-3">
+          <input class="f-input" name="username" placeholder="Username" autocomplete="username" required>
+          <input class="f-input" name="password" type="password" placeholder="Password" autocomplete="current-password" required>
+          <button class="btn-black w-full" type="submit">Masuk</button>
+          <p id="loginError" class="text-red-600 text-sm text-center"></p>
+          <button type="button" id="btnGoRegister" class="text-xs text-neutral-500 underline w-full text-center">Belum punya akun? Daftar</button>
+        </form>
+      </section>
+
+      <!-- ================= REGISTER ================= -->
+      <section id="viewRegister" class="view">
+        <h1 class="serif-italic text-3xl text-center mb-6">Daftar Member</h1>
+        <form id="formRegister" class="card p-6 space-y-3">
+          <input class="f-input" name="username" placeholder="Username" autocomplete="username" required>
+          <input class="f-input" name="password" type="password" placeholder="Password" autocomplete="new-password" required>
+          <button class="btn-black w-full" type="submit">Daftar</button>
+          <p id="registerError" class="text-red-600 text-sm text-center"></p>
+          <button type="button" id="btnGoLogin" class="text-xs text-neutral-500 underline w-full text-center">Sudah punya akun? Login</button>
+        </form>
+      </section>
+
+      <!-- ================= VENDOR LIST ================= -->
+      <section id="viewVendors" class="view">
+        <div class="text-center mb-6">
+          <h1 class="serif-italic text-2xl">Balance</h1>
+          <p id="balanceDisplay" class="text-xl font-semibold text-neutral-700">RP 0</p>
+        </div>
+        <div id="vendorList" class="space-y-3"></div>
+        <button id="btnShowWalletLog" class="mt-8 text-xs text-neutral-400 underline w-full text-center">Lihat Wallet Log (testing)</button>
+        <button id="btnLogout" class="mt-3 text-xs text-neutral-400 underline w-full text-center">Logout</button>
+      </section>
+
+      <!-- ================= GAME LIST ================= -->
+      <section id="viewGames" class="view">
+        <div class="text-center mb-6">
+          <h1 class="serif-italic text-2xl">Balance</h1>
+          <p id="balanceDisplayGames" class="text-xl font-semibold text-neutral-700">RP 0</p>
+        </div>
+        <button id="btnBackToVendors" class="text-xs text-neutral-500 underline mb-4">&larr; Kembali ke daftar provider</button>
+        <div id="gameGrid" class="grid grid-cols-2 gap-3"></div>
+      </section>
+
+      <!-- ================= WALLET LOG (testing) ================= -->
+      <section id="viewWalletLog" class="view">
+        <div class="flex items-center justify-between mb-4">
+          <h1 class="serif-italic text-2xl">Wallet Log</h1>
+          <button id="btnCloseWalletLog" class="text-xs text-neutral-500 underline">Tutup</button>
+        </div>
+        <p class="text-xs text-neutral-500 mb-3">Setiap panggilan GetBalance/ChangeBalance dari vendor tercatat di sini secara real-time (auto-refresh 3 detik).</p>
+        <div id="walletLogList" class="space-y-2 mono text-xs"></div>
+      </section>
+
+    </div>
+
+    <script>
+      const state = { username: null, balance: 0, vendorCode: null };
+
+      function showView(viewId) {
+        document.querySelectorAll(".view").forEach(el => el.classList.toggle("active", el.id === viewId));
+        if (viewId !== "viewWalletLog") stopWalletLogPolling();
+      }
+
+      function formatRupiah(amount) {
+        const value = Number(amount) || 0;
+        return "RP " + value.toLocaleString("id-ID", { maximumFractionDigits: 0 });
+      }
+
+      async function callBackend(endpoint, method = "GET", body = null) {
+        const config = { method, headers: { "Content-Type": "application/json" } };
+        if (body !== null) config.body = JSON.stringify(body);
+        const response = await fetch(endpoint, config);
+        const text = await response.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = null; }
+        if (!response.ok) {
+          throw new Error((data && (data.detail || data.message)) || `HTTP ${response.status}: ${text}`);
+        }
+        return data;
+      }
+
+      function parseLocalizedField(value, fallback) {
+        if (!value) return fallback;
+        try {
+          const parsed = JSON.parse(value);
+          return parsed.en || Object.values(parsed)[0] || fallback;
+        } catch (_) {
+          return value;
+        }
+      }
+
+      function escapeHtml(text) {
+        return String(text ?? "").replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[char]));
+      }
+
+      // ================= AUTH =================
+      document.getElementById("btnGoRegister").addEventListener("click", () => showView("viewRegister"));
+      document.getElementById("btnGoLogin").addEventListener("click", () => showView("viewLogin"));
+
+      document.getElementById("formLogin").addEventListener("submit", async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const errorEl = document.getElementById("loginError");
+        errorEl.textContent = "";
+        const username = form.querySelector('input[name="username"]').value.trim();
+        const password = form.querySelector('input[name="password"]').value;
+        try {
+          const user = await callBackend("/login", "POST", { username, password });
+          state.username = user.username;
+          state.balance = user.balance;
+          form.reset();
+          await enterDashboard();
+        } catch (error) {
+          errorEl.textContent = error.message;
+        }
+      });
+
+      document.getElementById("formRegister").addEventListener("submit", async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const errorEl = document.getElementById("registerError");
+        errorEl.textContent = "";
+        const username = form.querySelector('input[name="username"]').value.trim();
+        const password = form.querySelector('input[name="password"]').value;
+        try {
+          const user = await callBackend("/register", "POST", { username, password });
+          state.username = user.username;
+          state.balance = user.balance;
+          form.reset();
+          await enterDashboard();
+        } catch (error) {
+          errorEl.textContent = error.message;
+        }
+      });
+
+      document.getElementById("btnLogout").addEventListener("click", () => {
+        state.username = null;
+        state.balance = 0;
+        state.vendorCode = null;
+        showView("viewLogin");
+      });
+
+      async function enterDashboard() {
+        updateBalanceDisplays();
+        showView("viewVendors");
+        await loadVendors();
+      }
+
+      function updateBalanceDisplays() {
+        document.getElementById("balanceDisplay").textContent = formatRupiah(state.balance);
+        document.getElementById("balanceDisplayGames").textContent = formatRupiah(state.balance);
+      }
+
+      async function refreshBalance() {
+        try {
+          const user = await callBackend(`/balance?username=${encodeURIComponent(state.username)}`, "GET");
+          state.balance = user.balance;
+          updateBalanceDisplays();
+        } catch (_) {
+          // biarkan balance lama tampil kalau refresh gagal
+        }
+      }
+
+      // ================= VENDOR LIST =================
+      async function loadVendors() {
+        const container = document.getElementById("vendorList");
+        container.innerHTML = `<p class="text-xs text-neutral-400 text-center">memuat...</p>`;
+        try {
+          const response = await callBackend("/vendors", "GET");
+          const vendors = response.vendors || [];
+          container.innerHTML = vendors.map(vendor => {
+            const name = parseLocalizedField(vendor.vendorName, vendor.vendorCode);
+            return `
+              <div class="card p-4 flex items-center justify-between">
+                <span class="serif-italic text-xl">${escapeHtml(name)}</span>
+                <button class="btn-black" data-vendor="${escapeHtml(vendor.vendorCode)}" data-vendor-name="${escapeHtml(name)}">main</button>
+              </div>
+            `;
+          }).join("");
+          container.querySelectorAll("[data-vendor]").forEach(button => {
+            button.addEventListener("click", () => openGameList(button.dataset.vendor, button.dataset.vendorName));
+          });
+        } catch (error) {
+          container.innerHTML = `<p class="text-xs text-red-600 text-center">Gagal memuat provider: ${escapeHtml(error.message)}</p>`;
+        }
+      }
+
+      // ================= GAME LIST =================
+      async function openGameList(vendorCode, vendorName) {
+        state.vendorCode = vendorCode;
+        showView("viewGames");
+        await refreshBalance();
+        const grid = document.getElementById("gameGrid");
+        grid.innerHTML = `<p class="col-span-2 text-xs text-neutral-400 text-center">memuat game ${escapeHtml(vendorName)}...</p>`;
+        try {
+          const response = await callBackend(`/games?vendor=${encodeURIComponent(vendorCode)}`, "GET");
+          const games = response.vendorGames || [];
+          if (!games.length) {
+            grid.innerHTML = `<p class="col-span-2 text-xs text-neutral-400 text-center">tidak ada game untuk provider ini</p>`;
+            return;
+          }
+          grid.innerHTML = games.map(game => {
+            const name = parseLocalizedField(game.gameName, game.gameCode);
+            const image = parseLocalizedField(game.imageUrl, "");
+            return `
+              <div class="card overflow-hidden">
+                <img class="game-thumb" src="${escapeHtml(image)}" alt="${escapeHtml(name)}" loading="lazy" onerror="this.style.background='#ddd'">
+                <div class="p-3">
+                  <button class="btn-black w-full" data-game="${escapeHtml(game.gameCode)}">Main</button>
+                </div>
+              </div>
+            `;
+          }).join("");
+          grid.querySelectorAll("[data-game]").forEach(button => {
+            button.addEventListener("click", () => launchGame(vendorCode, button.dataset.game));
+          });
+        } catch (error) {
+          grid.innerHTML = `<p class="col-span-2 text-xs text-red-600 text-center">Gagal memuat game: ${escapeHtml(error.message)}</p>`;
+        }
+      }
+
+      document.getElementById("btnBackToVendors").addEventListener("click", () => {
+        showView("viewVendors");
+        refreshBalance();
+      });
+
+      async function launchGame(vendorCode, gameCode) {
+        try {
+          const response = await callBackend("/launch", "POST", {
+            username: state.username,
+            vendorCode,
+            gameCode,
+          });
+          if (response.launchUrl) {
+            window.open(response.launchUrl, "_blank");
+          } else {
+            alert("Gagal launch: " + (response.msg || "unknown error"));
+          }
+        } catch (error) {
+          alert("Gagal launch: " + error.message);
+        }
+      }
+
+      // ================= WALLET LOG (testing) =================
+      let walletLogIntervalId = null;
+
+      function startWalletLogPolling() {
+        if (walletLogIntervalId) return;
+        pollWalletLog();
+        walletLogIntervalId = setInterval(pollWalletLog, 3000);
+      }
+
+      function stopWalletLogPolling() {
+        if (!walletLogIntervalId) return;
+        clearInterval(walletLogIntervalId);
+        walletLogIntervalId = null;
+      }
+
+      async function pollWalletLog() {
+        const container = document.getElementById("walletLogList");
+        try {
+          const logs = await callBackend("/wallet-log?limit=50", "GET");
+          if (!logs.length) {
+            container.innerHTML = `<p class="text-neutral-400">belum ada callback dari vendor</p>`;
+            return;
+          }
+          container.innerHTML = logs.map(log => `
+            <div class="card p-3">
+              <div class="flex justify-between">
+                <span class="font-semibold">${escapeHtml(log.method)}</span>
+                <span class="text-neutral-400">${escapeHtml(log._id)}</span>
+              </div>
+              <div class="text-neutral-500">req: ${escapeHtml(JSON.stringify(log.request))}</div>
+              <div class="text-neutral-500">res: ${escapeHtml(JSON.stringify(log.response))}</div>
+            </div>
+          `).join("");
+        } catch (error) {
+          container.innerHTML = `<p class="text-red-600">Gagal memuat log: ${escapeHtml(error.message)}</p>`;
+        }
+      }
+
+      document.getElementById("btnShowWalletLog").addEventListener("click", () => {
+        showView("viewWalletLog");
+        startWalletLogPolling();
+      });
+      document.getElementById("btnCloseWalletLog").addEventListener("click", () => showView("viewVendors"));
+    </script>
+  </body>
+</html>

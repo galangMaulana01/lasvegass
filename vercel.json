@@ -1,0 +1,17 @@
+{
+  "builds": [
+    { "src": "main.py", "use": "@vercel/python" },
+    { "src": "index.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/register(.*)", "dest": "main.py" },
+    { "src": "/login(.*)", "dest": "main.py" },
+    { "src": "/balance(.*)", "dest": "main.py" },
+    { "src": "/vendors(.*)", "dest": "main.py" },
+    { "src": "/games(.*)", "dest": "main.py" },
+    { "src": "/launch(.*)", "dest": "main.py" },
+    { "src": "/wallet-callback(.*)", "dest": "main.py" },
+    { "src": "/wallet-log(.*)", "dest": "main.py" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
