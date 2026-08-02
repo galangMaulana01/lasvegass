@@ -73,6 +73,7 @@
     </div>
 
     <script>
+      const STORAGE_KEY = "lasvegass_username";
       const state = { username: null, balance: 0, vendorCode: null };
 
       function showView(viewId) {
@@ -126,6 +127,7 @@
           const user = await callBackend("/login", "POST", { username, password });
           state.username = user.username;
           state.balance = user.balance;
+          localStorage.setItem(STORAGE_KEY, state.username);
           form.reset();
           await enterDashboard();
         } catch (error) {
@@ -144,6 +146,7 @@
           const user = await callBackend("/register", "POST", { username, password });
           state.username = user.username;
           state.balance = user.balance;
+          localStorage.setItem(STORAGE_KEY, state.username);
           form.reset();
           await enterDashboard();
         } catch (error) {
@@ -155,6 +158,7 @@
         state.username = null;
         state.balance = 0;
         state.vendorCode = null;
+        localStorage.removeItem(STORAGE_KEY);
         showView("viewLogin");
       });
 
@@ -283,6 +287,26 @@
         }
       }
 
+      // ================= INIT: cek session tersimpan saat reload =================
+      async function init() {
+        const savedUsername = localStorage.getItem(STORAGE_KEY);
+        if (!savedUsername) {
+          showView("viewLogin");
+          return;
+        }
+        try {
+          const user = await callBackend(`/balance?username=${encodeURIComponent(savedUsername)}`, "GET");
+          state.username = user.username;
+          state.balance = user.balance;
+          await enterDashboard();
+        } catch (error) {
+          // Username tersimpan tapi sudah tidak valid (dihapus, dll) - bersihkan dan minta login ulang.
+          localStorage.removeItem(STORAGE_KEY);
+          showView("viewLogin");
+        }
+      }
+
+      init();
     </script>
   </body>
 </html>
