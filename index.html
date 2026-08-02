@@ -56,7 +56,6 @@
           <p id="balanceDisplay" class="text-xl font-semibold text-neutral-700">RP 0</p>
         </div>
         <div id="vendorList" class="space-y-3"></div>
-        <button id="btnShowWalletLog" class="mt-8 text-xs text-neutral-400 underline w-full text-center">Lihat Wallet Log (testing)</button>
         <button id="btnLogout" class="mt-3 text-xs text-neutral-400 underline w-full text-center">Logout</button>
       </section>
 
@@ -67,17 +66,8 @@
           <p id="balanceDisplayGames" class="text-xl font-semibold text-neutral-700">RP 0</p>
         </div>
         <button id="btnBackToVendors" class="text-xs text-neutral-500 underline mb-4">&larr; Kembali ke daftar provider</button>
+        <input id="gameSearch" type="text" placeholder="Cari game..." class="f-input mb-3">
         <div id="gameGrid" class="grid grid-cols-2 gap-3"></div>
-      </section>
-
-      <!-- ================= WALLET LOG (testing) ================= -->
-      <section id="viewWalletLog" class="view">
-        <div class="flex items-center justify-between mb-4">
-          <h1 class="serif-italic text-2xl">Wallet Log</h1>
-          <button id="btnCloseWalletLog" class="text-xs text-neutral-500 underline">Tutup</button>
-        </div>
-        <p class="text-xs text-neutral-500 mb-3">Setiap panggilan GetBalance/ChangeBalance dari vendor tercatat di sini secara real-time (auto-refresh 3 detik).</p>
-        <div id="walletLogList" class="space-y-2 mono text-xs"></div>
       </section>
 
     </div>
@@ -87,7 +77,6 @@
 
       function showView(viewId) {
         document.querySelectorAll(".view").forEach(el => el.classList.toggle("active", el.id === viewId));
-        if (viewId !== "viewWalletLog") stopWalletLogPolling();
       }
 
       function formatRupiah(amount) {
@@ -215,38 +204,62 @@
       }
 
       // ================= GAME LIST =================
+      let loadedGames = [];
+
+      function renderGameGrid() {
+        const grid = document.getElementById("gameGrid");
+        const searchTerm = document.getElementById("gameSearch").value.trim().toLowerCase();
+        const filtered = searchTerm
+          ? loadedGames.filter(game => game.searchName.includes(searchTerm) || game.searchCode.includes(searchTerm))
+          : loadedGames;
+        if (!filtered.length) {
+          grid.innerHTML = `<p class="col-span-2 text-xs text-neutral-400 text-center">tidak ada game yang cocok</p>`;
+          return;
+        }
+        grid.innerHTML = filtered.map(game => `
+          <div class="card overflow-hidden">
+            <img class="game-thumb" src="${escapeHtml(game.image)}" alt="${escapeHtml(game.name)}" loading="lazy" onerror="this.style.background='#ddd'">
+            <div class="p-3">
+              <button class="btn-black w-full" data-game="${escapeHtml(game.gameCode)}">Main</button>
+            </div>
+          </div>
+        `).join("");
+        grid.querySelectorAll("[data-game]").forEach(button => {
+          button.addEventListener("click", () => launchGame(state.vendorCode, button.dataset.game));
+        });
+      }
+
       async function openGameList(vendorCode, vendorName) {
         state.vendorCode = vendorCode;
         showView("viewGames");
+        document.getElementById("gameSearch").value = "";
         await refreshBalance();
         const grid = document.getElementById("gameGrid");
         grid.innerHTML = `<p class="col-span-2 text-xs text-neutral-400 text-center">memuat game ${escapeHtml(vendorName)}...</p>`;
         try {
           const response = await callBackend(`/games?vendor=${encodeURIComponent(vendorCode)}`, "GET");
           const games = response.vendorGames || [];
-          if (!games.length) {
+          loadedGames = games.map(game => {
+            const name = parseLocalizedField(game.gameName, game.gameCode);
+            return {
+              gameCode: game.gameCode,
+              name,
+              image: parseLocalizedField(game.imageUrl, ""),
+              searchName: name.toLowerCase(),
+              searchCode: String(game.gameCode || "").toLowerCase(),
+            };
+          });
+          if (!loadedGames.length) {
             grid.innerHTML = `<p class="col-span-2 text-xs text-neutral-400 text-center">tidak ada game untuk provider ini</p>`;
             return;
           }
-          grid.innerHTML = games.map(game => {
-            const name = parseLocalizedField(game.gameName, game.gameCode);
-            const image = parseLocalizedField(game.imageUrl, "");
-            return `
-              <div class="card overflow-hidden">
-                <img class="game-thumb" src="${escapeHtml(image)}" alt="${escapeHtml(name)}" loading="lazy" onerror="this.style.background='#ddd'">
-                <div class="p-3">
-                  <button class="btn-black w-full" data-game="${escapeHtml(game.gameCode)}">Main</button>
-                </div>
-              </div>
-            `;
-          }).join("");
-          grid.querySelectorAll("[data-game]").forEach(button => {
-            button.addEventListener("click", () => launchGame(vendorCode, button.dataset.game));
-          });
+          renderGameGrid();
         } catch (error) {
           grid.innerHTML = `<p class="col-span-2 text-xs text-red-600 text-center">Gagal memuat game: ${escapeHtml(error.message)}</p>`;
         }
       }
+
+      document.getElementById("gameSearch").addEventListener("input", renderGameGrid);
 
       document.getElementById("btnBackToVendors").addEventListener("click", () => {
         showView("viewVendors");
@@ -270,49 +283,6 @@
         }
       }
 
-      // ================= WALLET LOG (testing) =================
-      let walletLogIntervalId = null;
-
-      function startWalletLogPolling() {
-        if (walletLogIntervalId) return;
-        pollWalletLog();
-        walletLogIntervalId = setInterval(pollWalletLog, 3000);
-      }
-
-      function stopWalletLogPolling() {
-        if (!walletLogIntervalId) return;
-        clearInterval(walletLogIntervalId);
-        walletLogIntervalId = null;
-      }
-
-      async function pollWalletLog() {
-        const container = document.getElementById("walletLogList");
-        try {
-          const logs = await callBackend("/wallet-log?limit=50", "GET");
-          if (!logs.length) {
-            container.innerHTML = `<p class="text-neutral-400">belum ada callback dari vendor</p>`;
-            return;
-          }
-          container.innerHTML = logs.map(log => `
-            <div class="card p-3">
-              <div class="flex justify-between">
-                <span class="font-semibold">${escapeHtml(log.method)}</span>
-                <span class="text-neutral-400">${escapeHtml(log._id)}</span>
-              </div>
-              <div class="text-neutral-500">req: ${escapeHtml(JSON.stringify(log.request))}</div>
-              <div class="text-neutral-500">res: ${escapeHtml(JSON.stringify(log.response))}</div>
-            </div>
-          `).join("");
-        } catch (error) {
-          container.innerHTML = `<p class="text-red-600">Gagal memuat log: ${escapeHtml(error.message)}</p>`;
-        }
-      }
-
-      document.getElementById("btnShowWalletLog").addEventListener("click", () => {
-        showView("viewWalletLog");
-        startWalletLogPolling();
-      });
-      document.getElementById("btnCloseWalletLog").addEventListener("click", () => showView("viewVendors"));
     </script>
   </body>
 </html>

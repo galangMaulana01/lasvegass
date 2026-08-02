@@ -7,7 +7,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pymongo import MongoClient, ReturnDocument
+from pymongo import MongoClient
 
 load_dotenv()
 
@@ -41,15 +41,6 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(hash_password(password, salt), stored)
 
 
-def serialize_user(doc: dict) -> dict:
-    return {"username": doc["username"], "balance": doc.get("balance", 0)}
-
-
-def serialize_log(doc: dict) -> dict:
-    doc["_id"] = str(doc["_id"])
-    return doc
-
-
 # ---------- casino operator API (calls we make outward) ----------
 def call_casino(method: str, params: dict):
     body = {"method": method, "token": CASINO_TOKEN, "agentCode": CASINO_AGENT, **params}
@@ -62,6 +53,20 @@ def call_casino(method: str, params: dict):
     return response.json()
 
 
+def get_live_balance(username: str) -> float:
+    # Balance selalu ditanyakan langsung ke vendor (Transfer method) - kita
+    # tidak menyimpan/mengelola balance sendiri di DB sama sekali.
+    data = call_casino("GetUserInfo", {"userCode": username})
+    users = data.get("users") or []
+    if not users:
+        return 0
+    return users[0].get("balances", {}).get(CURRENCY_CODE, 0)
+
+
+def serialize_user(username: str) -> dict:
+    return {"username": username, "balance": get_live_balance(username)}
+
+
 # ---------- member auth ----------
 @app.post("/register")
 def register(payload: dict = Body(...)):
@@ -71,14 +76,14 @@ def register(payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="username dan password wajib diisi")
     if db.users.find_one({"username": username}):
         raise HTTPException(status_code=400, detail="username sudah dipakai")
-    # Daftarkan juga ke vendor supaya GetGameUrl nanti bisa launch untuk user ini.
+    # Daftarkan juga ke vendor supaya GetGameUrl/GetUserInfo nanti bisa dipakai untuk user ini.
     data = call_casino("CreateUser", {"userCode": username})
     msg = str(data.get("msg", "")).lower()
     already_exists = "already exist" in msg or "duplicate" in msg
     if data.get("status") not in (0, 7) and not already_exists:
         raise HTTPException(status_code=400, detail=data.get("msg", "CreateUser failed"))
-    db.users.insert_one({"username": username, "password": hash_password(password), "balance": 0})
-    return serialize_user(db.users.find_one({"username": username}))
+    db.users.insert_one({"username": username, "password": hash_password(password)})
+    return serialize_user(username)
 
 
 @app.post("/login")
@@ -88,15 +93,14 @@ def login(payload: dict = Body(...)):
     user = db.users.find_one({"username": username})
     if not user or not verify_password(password, user["password"]):
         raise HTTPException(status_code=401, detail="Username atau password salah")
-    return serialize_user(user)
+    return serialize_user(username)
 
 
 @app.get("/balance")
 def get_balance(username: str = Query(...)):
-    user = db.users.find_one({"username": username})
-    if not user:
+    if not db.users.find_one({"username": username}):
         raise HTTPException(status_code=404, detail="User tidak ditemukan")
-    return serialize_user(user)
+    return serialize_user(username)
 
 
 # ---------- game browsing / launch ----------
@@ -123,54 +127,6 @@ def launch_game(payload: dict = Body(...)):
     if game_code:
         params["gameCode"] = game_code
     return call_casino("GetGameUrl", params)
-
-
-# ---------- Wallet Callback API: dipanggil OLEH vendor saat user bermain ----------
-# Endpoint ini yang didaftarkan di backoffice vendor sebagai "site endpoint".
-# Setiap bet/win/cancel lewat sini secara real-time - inilah yang dites di project ini.
-@app.post("/wallet-callback")
-def wallet_callback(payload: dict = Body(...)):
-    method = payload.get("method")
-
-    if payload.get("token") != CASINO_TOKEN:
-        return {"status": 3, "msg": "INVALID_AGENT"}
-
-    if method == "GetBalance":
-        user = db.users.find_one({"username": payload.get("userCode")})
-        response = (
-            {"status": 5, "msg": "INVALID_USER"}
-            if not user
-            else {"status": 0, "msg": "SUCCESS", "balance": user.get("balance", 0)}
-        )
-        db.wallet_log.insert_one({"method": method, "request": payload, "response": response})
-        return response
-
-    if method == "ChangeBalance":
-        amount = payload.get("amount", 0)
-        updated = db.users.find_one_and_update(
-            {"username": payload.get("userCode")},
-            {"$inc": {"balance": amount}},
-            return_document=ReturnDocument.AFTER,
-        )
-        response = (
-            {"status": 5, "msg": "INVALID_USER"}
-            if not updated
-            else {"status": 0, "msg": "SUCCESS", "balance": updated.get("balance", 0)}
-        )
-        db.wallet_log.insert_one({"method": method, "request": payload, "response": response})
-        return response
-
-    if method == "UpdateDetail":
-        response = {"status": 0, "msg": "SUCCESS"}
-        db.wallet_log.insert_one({"method": method, "request": payload, "response": response})
-        return response
-
-    return {"status": 2, "msg": "INVALID_ACTION"}
-
-
-@app.get("/wallet-log")
-def get_wallet_log(limit: int = 50):
-    return [serialize_log(doc) for doc in db.wallet_log.find().sort("_id", -1).limit(limit)]
 
 
 if __name__ == "__main__":
